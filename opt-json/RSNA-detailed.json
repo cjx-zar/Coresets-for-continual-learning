@@ -1,0 +1,12 @@
+{
+    "data_info_path": "/home/cjx/workspace/RSNA/data/detailed",
+    "data_path": "/home/cjx/workspace/RSNA/data/stage_2_train_images",
+    "class_num": 3,
+    "ori-size": 1024,
+    "modify-size": 224,
+    "epochs": 100,
+    "lr": 0.005,
+    "GPU_rank": 4,
+    "batch_size": 32,
+    "loss": "focal"
+  }

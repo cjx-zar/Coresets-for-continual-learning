@@ -1,0 +1,19 @@
+{
+    "data_info_path": "/home/cjx/workspace/RSNA/data/binary",
+    "data_path": "/home/cjx/workspace/RSNA/data/stage_2_train_images",
+    "class_num": 2,
+    "day": 5,
+    "ori_size": 1024,
+    "modify_size": 224,
+    "design": 0,
+    "epochs": 100,
+    "finetune_epochs": 100,
+    "finetune_lr": 0.001,
+    "lr": 0.001,
+    "coreset_size": 1024,
+    "ignore": 0.05,
+    "GPUs": "0",
+    "batch_size": 128,
+    "loss": "balanced",
+    "model": "resnet18-pt"
+}
