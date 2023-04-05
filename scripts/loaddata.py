@@ -132,7 +132,7 @@ def init_df(data_info_path, train, day, reshuffle, design):
 def load_seq_RSNA(data_info_path, data_path, modify_size, train, day=1, reshuffle=False, design=False, val_ratio=0.1):
     df_list = init_df(data_info_path, train, day, reshuffle, design)
     
-    if train == 'train':
+    if train == 'train' or train == 'play':
         trainset_list = []
         valset_list = []
         for i in range(day):

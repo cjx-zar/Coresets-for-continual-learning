@@ -37,7 +37,7 @@ net.load_state_dict(torch.load('../model/vgg16-pt/vgg16-pt-balanced-seq5-84-c+n'
 
 
 test_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['data_path'],
-                              modify_size=opt['modify_size'], train='train')
+                              modify_size=opt['modify_size'], train='test')
 loader = data.DataLoader(test_data[0], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
 summ = 0

@@ -1,2 +1,2 @@
 # Coresets-for-continual-learning
-Coresets for continual learning of medical image
+Continual learning for breast cancer grading, a Coresets way.

@@ -7,6 +7,7 @@ import torch.nn.functional as F
 import torchvision.models as models
 import os
 import numpy as np
+from copy import deepcopy
 
 from loaddata import load_seq_RSNA, make_data
 from mymodels import ResNet18_pt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
@@ -42,6 +43,10 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 train_data, val_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['data_path'],
                             modify_size=opt['modify_size'], train='train', day=opt['day'], reshuffle=False, design=opt['design'])
+
+test_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['data_path'],
+                              modify_size=opt['modify_size'], train='test', reshuffle=False, design=opt['design'])
+test_loader = data.DataLoader(test_data[0], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
 def init_train():
     if opt['model'] == 'resnet18-pt':
@@ -92,10 +97,6 @@ def model_test(net, test_loader, fg_acc=False):
 
 
 def eva_and_save_model(net, val_loaders, method):
-    test_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['data_path'],
-                              modify_size=opt['modify_size'], train='test', reshuffle=False, design=opt['design'])
-    test_loader = data.DataLoader(test_data[0], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-
     test_acc = model_test(net, [test_loader])
     forget_acc = model_test(net, val_loaders, fg_acc=True)
     test_acc = ('%.2f'%test_acc).split('.')[-1]
@@ -167,7 +168,7 @@ def train(idx, train_loader, val_loader, net, criterion, mode="train", tolerance
                 last_acc = val_accuracy
                 if best_acc < val_accuracy:
                     best_acc = val_accuracy
-                    best_model = net.state_dict()
+                    best_model = deepcopy(net.state_dict())
                 if epoch % 10 == 9:
                     print('[Seq %d, Epoch %d] val accuracy: %.2f (%d / %d), avg loss: %.2f .' % (idx+1, epoch+1, val_accuracy, correct, summ, loss100 / cnt))
                 if tol >= tolerance:
@@ -302,8 +303,8 @@ def continual_train_withCandN():
                 coreset.append(train_data[i].tensor_data[train_data[i].tensor_targets == j][idx])
         
         print(best_acc)
-        # net.load_state_dict(best_model)
-    net.load_state_dict(best_model)
+        net.load_state_dict(best_model)
+    
     eva_and_save_model(net, val_loaders, '-c+n')
 
 
@@ -435,8 +436,8 @@ def continual_train_withCandN_uniform():
 
 if __name__ == '__main__':
     
-    forgetting_train()
-    continual_train_withCandN_uniform()
+    # forgetting_train()
+    # continual_train_withCandN_uniform()
     continual_train_withCandN()
     
 

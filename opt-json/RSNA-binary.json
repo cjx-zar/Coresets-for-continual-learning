@@ -12,8 +12,8 @@
     "lr": 0.001,
     "coreset_size": 1024,
     "ignore": 0.05,
-    "GPUs": "0",
+    "GPUs": "1,2,3,4",
     "batch_size": 128,
     "loss": "balanced",
-    "model": "resnet18-pt"
+    "model": "vgg16-pt"
 }
