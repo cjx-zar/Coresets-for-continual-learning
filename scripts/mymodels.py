@@ -5,9 +5,9 @@ import torchvision.models as models
 from efficientnet_pytorch import EfficientNet
 
 class ResNet18(nn.Module):
-    def __init__(self, num_classes, in_channel=1):
+    def __init__(self, num_classes, in_channel, pre):
         super(ResNet18, self).__init__()
-        self.net = models.resnet18(pretrained=True)
+        self.net = models.resnet18(pretrained=pre)
         self.net.conv1 = torch.nn.Conv2d(in_channel, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
         self.fc = torch.nn.Linear(512, num_classes)
         self.ebd = nn.Sequential(*list(self.net.children())[:-1])
@@ -62,8 +62,11 @@ class DenseNet(nn.Module):
         return feature, res
 
 
+def ResNet18_npt(num_classes, in_channel=1):
+    return ResNet18(num_classes, in_channel, pre=False)
+
 def ResNet18_pt(num_classes, in_channel=1):
-    return ResNet18(num_classes, in_channel)
+    return ResNet18(num_classes, in_channel, pre=True)
 
 def VGG16_pt(num_classes, in_channel=1):
     return VGG16(num_classes, in_channel)

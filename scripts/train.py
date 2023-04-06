@@ -10,7 +10,7 @@ import numpy as np
 from copy import deepcopy
 
 from loaddata import load_seq_RSNA, make_data
-from mymodels import ResNet18_pt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
+from mymodels import ResNet18_pt, ResNet18_npt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
 from samplers import diversity_sample, get_ebd_byclass, uniform_sample
 
 
@@ -57,6 +57,8 @@ def init_train():
         net = VGG19_pt(opt['class_num']).to(device)
     elif opt['model'] == 'densenet-pt':
         net = DenseNet_pt(opt['class_num']).to(device)
+    elif opt['model'] == 'resnet18':
+        net = ResNet18_npt(opt['class_num']).to(device)
     # elif opt['model'] == 'lenet-pt':
     #     net = LeNet_pt(opt['class_num']).to(device)
     # elif opt['model'] == 'efficient-pt':
