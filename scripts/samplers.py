@@ -10,36 +10,6 @@ import numpy as np
 import random
 
 
-# with open("../opt-json/RSNA-binary.json") as f:
-#     opt = json.load(f)
-
-# ctn_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['data_path'],
-#                                modify_size=opt['modify_size'], train='play', day=opt['day'], reshuffle=False)
-
-# loader = data.DataLoader(ctn_data, batch_size=opt['batch_size'], shuffle=True)
-
-# os.environ["CUDA_VISIBLE_DEVICES"] = opt['GPUs']
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-# if opt['model'] == 'resnet18-pt':
-#     net = ResNet18_pt(opt['class_num']).to(device)
-# elif opt['model'] == 'resnet18':
-#     net = ResNet18(opt['class_num']).to(device)
-# elif opt['model'] == 'vgg16-pt':
-#     net = VGG16_pt(opt['class_num']).to(device)
-# elif opt['model'] == 'efficient-pt':
-#     net = EfficientNet_pt(opt['class_num']).to(device)
-# elif opt['model'] == 'densenet-pt':
-#     net = DenseNet_pt(opt['class_num']).to(device)
-# elif opt['model'] == 'vgg19-pt':
-#     net = VGG19_pt(opt['class_num']).to(device)
-# elif opt['model'] == 'lenet-pt':
-#     net = LeNet_pt(opt['class_num']).to(device)
-
-
-# net.load_state_dict(torch.load('../model/resnet18-pt-balanced-96', map_location=device))
-
-
 # def get_uncertainty(prob):
 #     return torch.sum(-prob * torch.log(prob), dim=1) # entropy, 越大不确定性越大
 
@@ -160,3 +130,31 @@ def get_ebd_byclass(net, loader, opt):
             for i in range(len(labels)):
                 ebd[labels[i]].append(ebd_all[i].numpy())
     return ebd
+
+
+def merge_with_mem(dataset, coreset, i, opt):
+    for j in range(opt['class_num']):
+        merge_data = np.concatenate((dataset.tensor_data[dataset.tensor_targets == j], coreset[j]))
+        if not j:
+            tot_data = merge_data
+            tot_targets = torch.zeros(len(merge_data), dtype=int)
+        else:
+            tot_data = np.concatenate((tot_data, merge_data))
+            tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
+    new_train_data = make_data(tot_data, tot_targets)
+    
+    return new_train_data
+
+
+def get_Gonzalez_mem(net, loader, dataset, opt, tag):
+    coreset = []
+    ebd = get_ebd_byclass(net, loader, opt)
+    for j in range(opt['class_num']):
+        ebd[j] = np.array(ebd[j])
+        if tag == 'train_mem':
+            idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+        elif tag == 'val_mem':
+            idx = diversity_sample(ebd[j], opt['val_coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+        coreset.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
+
+    return coreset

@@ -11,7 +11,7 @@ from copy import deepcopy
 
 from loaddata import load_seq_RSNA, make_data
 from mymodels import ResNet18_pt, ResNet18_npt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
-from samplers import diversity_sample, get_ebd_byclass, uniform_sample
+from samplers import diversity_sample, get_ebd_byclass, uniform_sample, merge_with_mem, get_Gonzalez_mem
 
 
 class FocalLoss(nn.Module):
@@ -73,37 +73,49 @@ def init_train():
     return net, criterion
 
 
-def model_test(net, test_loader, fg_acc=False):
+def model_test(net):
     summ = 0
     correct = 0
     with torch.no_grad():
         net.eval()
-        for loader in test_loader:
-            for i, data in enumerate(loader):
-                inputs, labels = data
-                inputs, labels = inputs.to(device), labels.to(device)
+        for i, data in enumerate(test_loader):
+            inputs, labels = data
+            inputs, labels = inputs.to(device), labels.to(device)
 
-                _, validation_output = net(inputs)
-                val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
-                for i in range(len(labels)):
-                    if val_y[i] == labels[i]:
-                        correct += 1
-                    summ += 1
+            _, validation_output = net(inputs)
+            val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
+            correct += (val_y == labels).sum().item()
+            summ += len(val_y)
     val_accuracy = float(correct / summ)
-    if fg_acc:
-        print('forget accuracy: %.3f (%d / %d).' % (val_accuracy, correct, summ))
-    else:
-        print('test accuracy: %.3f (%d / %d).' % (val_accuracy, correct, summ))
-
+    print('test accuracy: %.3f (%d / %d).' % (val_accuracy, correct, summ))
     return val_accuracy
 
 
-def eva_and_save_model(net, val_loaders, method):
-    test_acc = model_test(net, [test_loader])
-    forget_acc = model_test(net, val_loaders, fg_acc=True)
+def model_val(net):
+    summ = 0
+    correct = 0
+    with torch.no_grad():
+        net.eval()
+        for i in range(opt['day']):
+            loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            for j, data in enumerate(loader):
+                inputs, labels = data
+                inputs = inputs.to(device)
+
+                _, validation_output = net(inputs)
+                val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
+                correct += (val_y == labels).sum().item()
+                summ += len(val_y)
+    val_accuracy = float(correct / summ)
+    print('val accuracy: %.3f (%d / %d).' % (val_accuracy, correct, summ))
+    return val_accuracy
+
+
+def eva_and_save_model(net, method):
+    test_acc = model_test(net)
+    forget_acc = model_val(net)
     test_acc = ('%.2f'%test_acc).split('.')[-1]
     forget_acc = ('%.2f'%forget_acc).split('.')[-1]
-
     acc_info = '-' + test_acc + '-' + forget_acc
 
     if opt['design']:
@@ -111,7 +123,7 @@ def eva_and_save_model(net, val_loaders, method):
     else:
         borib = '-b'
 
-    torch.save(net.state_dict(), '../model/' + opt['model'] + '/' + opt['loss'] + '-seq' + str(opt['day']) + acc_info + method + borib)
+    torch.save(net.state_dict(), '../model/' + opt['model'] + '-' + str(opt['coreset_size']) + '/' + opt['loss'] + '-seq' + str(opt['day']) + acc_info + method + borib + '-t')
 
 
 def train(idx, train_loader, val_loader, net, criterion, mode="train", tolerance=4):
@@ -228,7 +240,7 @@ def continual_train_withC():
         print(best_acc)
         net.load_state_dict(best_model)
     
-    eva_and_save_model(net, val_loaders, '-c')
+    eva_and_save_model(net, '-c')
 
 
 def forgetting_train():
@@ -252,62 +264,83 @@ def forgetting_train():
         print(best_acc)
         net.load_state_dict(best_model)
     
-    eva_and_save_model(net, val_loaders, '-forget')
+    eva_and_save_model(net, '-forget')
 
 
 def continual_train_withCandN():
     print("--------Train with Gonzalez Coreset and new data--------")
     net, criterion = init_train()
 
-    coreset = []
-    val_loaders = []
+    coreset = None
+    val_coreset = None
     for i in range(opt['day']):
-        
-        val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-        val_loaders.append(val_loader)
-
-        # 新来的数据直接和memory coreset一起微调，然后生成新的coreset
+        if opt['loss'] == 'balanced':
+            criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
         if i:
-            # 融合新数据和memory
-            for j in range(opt['class_num']):
-                merge_data = np.concatenate((train_data[i].tensor_data[train_data[i].tensor_targets == j], coreset[j]))
-                if not j:
-                    tot_data = merge_data
-                    tot_targets = torch.zeros(len(merge_data), dtype=int)
-                else:
-                    tot_data = np.concatenate((tot_data, merge_data))
-                    tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
-            new_train_data = make_data(tot_data, tot_targets)
+            new_train_data = merge_with_mem(train_data[i], coreset, i, opt)
             new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-            if opt['loss'] == 'balanced':
-                criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
-            best_acc, best_model = train(i, new_train_loader, val_loader, net, criterion, "fine-tune")
-
-            # 生成新的coreset
-            new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            ebd = get_ebd_byclass(net, new_train_loader, opt)
-            for j in range(opt['class_num']):
-                ebd[j] = np.array(ebd[j])
-                idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
-                coreset[j] = new_train_data.tensor_data[new_train_data.tensor_targets == j][idx]
-
+            new_val_data = merge_with_mem(val_data[i], val_coreset, i, opt)
+            new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "fine-tune")
         else:
-            #初始化coreset
-            train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-            if opt['loss'] == 'balanced':
-                criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
-            best_acc, best_model = train(i, train_loader, val_loader, net, criterion, "train")
-            train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            ebd = get_ebd_byclass(net, train_loader, opt)
-            for j in range(opt['class_num']):
-                ebd[j] = np.array(ebd[j])
-                idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
-                coreset.append(train_data[i].tensor_data[train_data[i].tensor_targets == j][idx])
+            new_train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+            new_val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "train")
         
         print(best_acc)
         net.load_state_dict(best_model)
+
+        loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
     
-    eva_and_save_model(net, val_loaders, '-c+n')
+        coreset = get_Gonzalez_mem(net, loader, new_train_data, opt, "train_mem")
+        val_coreset = get_Gonzalez_mem(net, new_val_loader, new_val_data, opt, "val_mem")
+
+
+        # val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+        # val_loaders.append(val_loader)
+
+        # # 新来的数据直接和memory coreset一起微调，然后生成新的coreset
+        # if i:
+        #     # 融合新数据和memory
+        #     for j in range(opt['class_num']):
+        #         merge_data = np.concatenate((train_data[i].tensor_data[train_data[i].tensor_targets == j], coreset[j]))
+        #         if not j:
+        #             tot_data = merge_data
+        #             tot_targets = torch.zeros(len(merge_data), dtype=int)
+        #         else:
+        #             tot_data = np.concatenate((tot_data, merge_data))
+        #             tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
+        #     new_train_data = make_data(tot_data, tot_targets)
+        #     new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+        #     if opt['loss'] == 'balanced':
+        #         criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
+        #     best_acc, best_model = train(i, new_train_loader, val_loader, net, criterion, "fine-tune")
+
+        #     # 生成新的coreset
+        #     new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        #     ebd = get_ebd_byclass(net, new_train_loader, opt)
+        #     for j in range(opt['class_num']):
+        #         ebd[j] = np.array(ebd[j])
+        #         idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+        #         coreset[j] = new_train_data.tensor_data[new_train_data.tensor_targets == j][idx]
+
+        # else:
+        #     #初始化coreset
+        #     train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+        #     if opt['loss'] == 'balanced':
+        #         criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
+        #     best_acc, best_model = train(i, train_loader, val_loader, net, criterion, "train")
+        #     train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        #     ebd = get_ebd_byclass(net, train_loader, opt)
+        #     for j in range(opt['class_num']):
+        #         ebd[j] = np.array(ebd[j])
+        #         idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+        #         coreset.append(train_data[i].tensor_data[train_data[i].tensor_targets == j][idx])
+        
+        # print(best_acc)
+        # net.load_state_dict(best_model)
+    
+    eva_and_save_model(net, '-c+n')
 
 
 def continual_train_withNthenC():
@@ -374,7 +407,7 @@ def continual_train_withNthenC():
         print(best_acc)
         net.load_state_dict(best_model)
     
-    eva_and_save_model(net, val_loaders, '-n->c')
+    eva_and_save_model(net, '-n->c')
 
 
 def continual_train_withCandN_uniform():
@@ -433,7 +466,7 @@ def continual_train_withCandN_uniform():
         print(best_acc)
         net.load_state_dict(best_model)
     
-    eva_and_save_model(net, val_loaders, '-uc+n')
+    eva_and_save_model(net, '-uc+n')
 
 
 if __name__ == '__main__':
