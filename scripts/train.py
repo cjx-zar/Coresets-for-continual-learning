@@ -11,7 +11,7 @@ from copy import deepcopy
 
 from loaddata import load_seq_RSNA, make_data
 from mymodels import ResNet18_pt, ResNet18_npt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
-from samplers import diversity_sample, get_ebd_byclass, uniform_sample, merge_with_mem, get_Gonzalez_mem
+from samplers import diversity_sample, get_ebd_byclass, uniform_sample, merge_with_mem, get_Gonzalez_mem, get_Uniform_mem
 
 
 class FocalLoss(nn.Module):
@@ -80,7 +80,7 @@ def model_test(net):
         net.eval()
         for i, data in enumerate(test_loader):
             inputs, labels = data
-            inputs, labels = inputs.to(device), labels.to(device)
+            inputs= inputs.to(device)
 
             _, validation_output = net(inputs)
             val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
@@ -98,8 +98,8 @@ def model_val(net):
         net.eval()
         for i in range(opt['day']):
             loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            for j, data in enumerate(loader):
-                inputs, labels = data
+            for j, ddata in enumerate(loader):
+                inputs, labels = ddata
                 inputs = inputs.to(device)
 
                 _, validation_output = net(inputs)
@@ -273,19 +273,20 @@ def continual_train_withCandN():
 
     coreset = None
     val_coreset = None
+    cnt = [0, 0]
     for i in range(opt['day']):
-        if opt['loss'] == 'balanced':
-            criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
         if i:
             new_train_data = merge_with_mem(train_data[i], coreset, i, opt)
-            new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
             new_val_data = merge_with_mem(val_data[i], val_coreset, i, opt)
-            new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "fine-tune")
         else:
-            new_train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-            new_val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "train")
+            new_train_data = train_data[i]
+            new_val_data = val_data[i]
+        
+        new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+        new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        if opt['loss'] == 'balanced':
+            criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
+        best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "train")
         
         print(best_acc)
         net.load_state_dict(best_model)
@@ -293,7 +294,7 @@ def continual_train_withCandN():
         loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
     
         coreset = get_Gonzalez_mem(net, loader, new_train_data, opt, "train_mem")
-        val_coreset = get_Gonzalez_mem(net, new_val_loader, new_val_data, opt, "val_mem")
+        val_coreset = get_Uniform_mem(net, new_val_loader, new_val_data, cnt, opt, "val_mem", i)
 
 
         # val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
@@ -340,6 +341,7 @@ def continual_train_withCandN():
         # print(best_acc)
         # net.load_state_dict(best_model)
     
+    print(cnt)
     eva_and_save_model(net, '-c+n')
 
 
@@ -441,27 +443,29 @@ def continual_train_withCandN_uniform():
 
             # 生成新的coreset
             new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            ebd = get_ebd_byclass(net, new_train_loader, opt)
-            for j in range(opt['class_num']):
-                ebd[j] = np.array(ebd[j])
-                tmp = cnt[j]
-                cnt[j] += ebd[j].shape[0] - opt['coreset_size']
-                idx = uniform_sample(ebd[j], opt['coreset_size'], tmp / cnt[j])
-                coreset[j] = new_train_data.tensor_data[new_train_data.tensor_targets == j][idx]
+            coreset = get_Uniform_mem(net, new_train_loader, new_train_data, cnt, opt, "train_mem", i)
+            # ebd = get_ebd_byclass(net, new_train_loader, opt)
+            # for j in range(opt['class_num']):
+            #     ebd[j] = np.array(ebd[j])
+            #     tmp = cnt[j]
+            #     cnt[j] += ebd[j].shape[0] - opt['coreset_size']
+            #     idx = uniform_sample(ebd[j], opt['coreset_size'], tmp / cnt[j])
+            #     coreset[j] = new_train_data.tensor_data[new_train_data.tensor_targets == j][idx]
 
         else:
             #初始化coreset
             train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-            if opt['loss'] == 'balanced':
-                criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
-            best_acc, best_model = train(i, train_loader, val_loader, net, criterion, "train")
-            train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-            ebd = get_ebd_byclass(net, train_loader, opt)
-            for j in range(opt['class_num']):
-                ebd[j] = np.array(ebd[j])
-                cnt[j] += ebd[j].shape[0]
-                idx = uniform_sample(ebd[j], opt['coreset_size'], opt['coreset_size'] / cnt[j])
-                coreset.append(train_data[i].tensor_data[train_data[i].tensor_targets == j][idx])
+            coreset = get_Uniform_mem(net, train_loader, train_data[i], cnt, opt, "train_mem", i)
+            # if opt['loss'] == 'balanced':
+            #     criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
+            # best_acc, best_model = train(i, train_loader, val_loader, net, criterion, "train")
+            # train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            # ebd = get_ebd_byclass(net, train_loader, opt)
+            # for j in range(opt['class_num']):
+            #     ebd[j] = np.array(ebd[j])
+            #     cnt[j] += ebd[j].shape[0]
+            #     idx = uniform_sample(ebd[j], opt['coreset_size'], opt['coreset_size'] / cnt[j])
+            #     coreset.append(train_data[i].tensor_data[train_data[i].tensor_targets == j][idx])
 
         print(best_acc)
         net.load_state_dict(best_model)
@@ -469,11 +473,92 @@ def continual_train_withCandN_uniform():
     eva_and_save_model(net, '-uc+n')
 
 
+def day_test(idx, net, train_loader, val_loader):
+    summ = 0
+    correct = 0
+    with torch.no_grad():
+        net.eval()
+        for i, data in enumerate(train_loader):
+            inputs, labels = data
+            inputs= inputs.to(device)
+
+            _, validation_output = net(inputs)
+            val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
+            correct += (val_y == labels).sum().item()
+            summ += len(val_y)
+    with torch.no_grad():
+        net.eval()
+        for i, data in enumerate(val_loader):
+            inputs, labels = data
+            inputs= inputs.to(device)
+
+            _, validation_output = net(inputs)
+            val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
+            correct += (val_y == labels).sum().item()
+            summ += len(val_y)
+    val_accuracy = float(correct / summ)
+    print('test accuracy: %.3f (%d / %d).' % (val_accuracy, correct, summ))
+    return val_accuracy
+
+
+def detailed_train():
+    print("--------Detailed Train--------")
+    net, criterion = init_train()
+
+    coreset = None
+    val_coreset = None
+    for i in range(opt['day']):
+        if i:
+            train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+            val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+
+            #先测train_data[i] + val_data[i]
+            print("day %d our net result is %.3f" % (i, day_test(i, net, train_loader, val_loader)))
+            print("day %d forget net result is %.3f" % (i, day_test(i, net_forget, train_loader, val_loader)))
+
+            #训练net_forget
+            if opt['loss'] == 'balanced':
+                criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
+            best_acc, best_model = train(i, train_loader, val_loader, net_forget, criterion, "train")
+            net_forget.load_state_dict(best_model)
+
+            #训练our net, 更新coreset和coreset_val
+            new_train_data = merge_with_mem(train_data[i], coreset, i, opt)
+            new_val_data = merge_with_mem(val_data[i], val_coreset, i, opt)
+            # new_val_data = val_data[i]
+            new_train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+            new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            if opt['loss'] == 'balanced':
+                criterion = nn.CrossEntropyLoss(weight=new_train_data.weight.to(device))
+            best_acc, best_model = train(i, new_train_loader, new_val_loader, net, criterion, "train")
+            net.load_state_dict(best_model)
+            
+            loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            coreset = get_Gonzalez_mem(net, loader, new_train_data, opt, "train_mem")
+            val_coreset = get_Gonzalez_mem(net, new_val_loader, new_val_data, opt, "val_mem")
+
+        else:
+            train_loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+            val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            if opt['loss'] == 'balanced':
+                criterion = nn.CrossEntropyLoss(weight=train_data[i].weight.to(device))
+            best_acc, best_model = train(i, train_loader, val_loader, net, criterion, "train")
+            net.load_state_dict(best_model)
+            net_forget = deepcopy(net)
+            loader = data.DataLoader(train_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+            coreset = get_Gonzalez_mem(net, loader, train_data[i], opt, "train_mem")
+            val_coreset = get_Gonzalez_mem(net, val_loader, val_data[i], opt, "val_mem")
+
+    print("Our net test result:", model_test(net))
+    print("Forget net test result:", model_test(net_forget))
+
+
 if __name__ == '__main__':
     
     # forgetting_train()
     # continual_train_withCandN_uniform()
     continual_train_withCandN()
+    # detailed_train()
     
 
     # continual_train_withC()

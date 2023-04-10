@@ -1,4 +1,4 @@
-from loaddata import load_seq_RSNA
+from loaddata import load_seq_RSNA, make_data
 from mymodels import ResNet18_pt, VGG16_pt, VGG19_pt, EfficientNet_pt, DenseNet_pt, LeNet_pt
 
 import torch
@@ -154,7 +154,35 @@ def get_Gonzalez_mem(net, loader, dataset, opt, tag):
         if tag == 'train_mem':
             idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
         elif tag == 'val_mem':
-            idx = diversity_sample(ebd[j], opt['val_coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+            idx = diversity_sample(ebd[j], opt['val_coreset_size'], ignore=4)
+        coreset.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
+
+    return coreset
+
+
+def get_Uniform_mem(net, loader, dataset, cnt, opt, tag, idx):
+    coreset = []
+    ebd = get_ebd_byclass(net, loader, opt)
+    for j in range(opt['class_num']):
+        ebd[j] = np.array(ebd[j])
+        if tag == 'train_mem':
+            if idx:
+                tmp = cnt[j]
+                cnt[j] += ebd[j].shape[0] - opt['coreset_size']
+            else:
+                tmp = opt['coreset_size']
+                cnt[j] += ebd[j].shape[0]
+            idx = uniform_sample(ebd[j], opt['coreset_size'], tmp / cnt[j])
+
+        elif tag == 'val_mem':
+            if idx:
+                tmp = cnt[j]
+                cnt[j] += ebd[j].shape[0] - opt['val_coreset_size']
+            else:
+                tmp = opt['val_coreset_size']
+                cnt[j] += ebd[j].shape[0]
+            idx = uniform_sample(ebd[j], opt['val_coreset_size'], tmp / cnt[j])
+        
         coreset.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
 
     return coreset
