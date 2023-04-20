@@ -1,6 +1,7 @@
 {
     "data_info_path": "/home/cjx/workspace/RSNA/data/binary",
     "data_path": "/home/cjx/workspace/RSNA/data/stage_2_train_images",
+    "non_CIL" : 0.834,
     "class_num": 2,
     "day": 5,
     "ori_size": 1024,
@@ -10,11 +11,14 @@
     "finetune_epochs": 100,
     "finetune_lr": 0.001,
     "lr": 0.001,
-    "coreset_size": 768,
+    "mem_size": 1024,
+    "coreset_size": 512,
     "val_coreset_size": 128,
     "ignore": 0.05,
-    "GPUs": "0",
+    "GPUs": "6",
     "batch_size": 128,
-    "loss": "balanced",
+    "reweight" : 101,
+    "new_replay" : 10,
+    "loss": "focal",
     "model": "resnet18-pt"
 }

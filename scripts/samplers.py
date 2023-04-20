@@ -8,6 +8,7 @@ import json
 import os
 import numpy as np
 import random
+from copy import deepcopy
 
 
 # def get_uncertainty(prob):
@@ -123,7 +124,7 @@ def get_ebd_byclass(net, loader, opt):
     with torch.no_grad():
         net.eval()
         for data in loader: 
-            inputs, labels = data
+            inputs, labels, weight = data
             inputs = inputs.to(device)
             ebd_all, _ = net(inputs)
             ebd_all = ebd_all.cpu().squeeze()
@@ -132,57 +133,108 @@ def get_ebd_byclass(net, loader, opt):
     return ebd
 
 
-def merge_with_mem(dataset, coreset, i, opt):
-    for j in range(opt['class_num']):
-        merge_data = np.concatenate((dataset.tensor_data[dataset.tensor_targets == j], coreset[j]))
-        if not j:
-            tot_data = merge_data
-            tot_targets = torch.zeros(len(merge_data), dtype=int)
-        else:
-            tot_data = np.concatenate((tot_data, merge_data))
-            tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
-    new_train_data = make_data(tot_data, tot_targets)
+def merge(ds, coreset, opt, weight=1):
+    if coreset is None:
+        return deepcopy(ds)
     
-    return new_train_data
+    dataset = deepcopy(ds)
+    for j in range(opt['class_num']):
+        dataset.tensor_data = np.concatenate((dataset.tensor_data, coreset[j]))
+        dataset.tensor_targets = torch.cat((dataset.tensor_targets, (torch.ones(len(coreset[j]), dtype=int) * j)), 0)
+        dataset.weight = torch.cat((dataset.weight, torch.ones(len(coreset[j]))*weight), 0)
+    dataset.update_classw()
+
+    # for j in range(opt['class_num']):
+    #     merge_data = np.concatenate((dataset.tensor_data[dataset.tensor_targets == j], coreset[j]))
+    #     merge_weight = torch.cat((torch.ones(len(dataset.tensor_data[dataset.tensor_targets == j])), torch.ones(len(coreset[j]))*weight), 0)
+    #     if not j:
+    #         tot_data = merge_data
+    #         tot_targets = torch.zeros(len(merge_data), dtype=int)
+    #         tot_weight = merge_weight
+    #     else:
+    #         tot_data = np.concatenate((tot_data, merge_data))
+    #         tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
+    #         tot_weight = torch.cat((tot_weight, merge_weight), 0)    
+    return dataset
 
 
-def get_Gonzalez_mem(net, loader, dataset, opt, tag):
+def Gonzalez(net, dataset, opt, tag):
     coreset = []
+    loader = data.DataLoader(dataset, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
     ebd = get_ebd_byclass(net, loader, opt)
     for j in range(opt['class_num']):
         ebd[j] = np.array(ebd[j])
         if tag == 'train_mem':
+            if ebd[j].shape[0] <= opt['coreset_size']:
+                coreset.append(dataset.tensor_data[dataset.tensor_targets == j])
+                continue
             idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
         elif tag == 'val_mem':
+            if ebd[j].shape[0] <= opt['val_coreset_size']:
+                coreset.append(dataset.tensor_data[dataset.tensor_targets == j])
+                continue
             idx = diversity_sample(ebd[j], opt['val_coreset_size'], ignore=4)
         coreset.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
 
     return coreset
 
 
-def get_Uniform_mem(net, loader, dataset, cnt, opt, tag, idx):
+def get_Gonzalez(net, memory, opt):
     coreset = []
+    ans = 0
+    for j in range(opt['class_num']):
+        merge_data = memory[j]
+        if not j:
+            tot_data = merge_data
+            tot_targets = torch.zeros(len(merge_data), dtype=int)
+        else:
+            tot_data = np.concatenate((tot_data, merge_data))
+            tot_targets = torch.cat((tot_targets, (torch.ones(len(merge_data), dtype=int) * j)), 0)
+    dataset = make_data(tot_data, tot_targets, None)
+
+    loader = data.DataLoader(dataset, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
     ebd = get_ebd_byclass(net, loader, opt)
     for j in range(opt['class_num']):
         ebd[j] = np.array(ebd[j])
-        if tag == 'train_mem':
-            if idx:
-                tmp = cnt[j]
-                cnt[j] += ebd[j].shape[0] - opt['coreset_size']
-            else:
-                tmp = opt['coreset_size']
-                cnt[j] += ebd[j].shape[0]
-            idx = uniform_sample(ebd[j], opt['coreset_size'], tmp / cnt[j])
-
-        elif tag == 'val_mem':
-            if idx:
-                tmp = cnt[j]
-                cnt[j] += ebd[j].shape[0] - opt['val_coreset_size']
-            else:
-                tmp = opt['val_coreset_size']
-                cnt[j] += ebd[j].shape[0]
-            idx = uniform_sample(ebd[j], opt['val_coreset_size'], tmp / cnt[j])
-        
+        if ebd[j].shape[0] <= opt['coreset_size']:
+            coreset.append(dataset.tensor_data[dataset.tensor_targets == j])
+            ans += len(dataset.tensor_data[dataset.tensor_targets == j])
+            continue
+        idx = diversity_sample(ebd[j], opt['coreset_size'], ignore=int(opt['ignore']*len(ebd[j])))
+        ans += opt['coreset_size']
         coreset.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
 
-    return coreset
+    return coreset, ans
+
+
+def get_Uniform(net, dataset, cnt, opt, id, tag="train"):
+    memory = []
+    loader = data.DataLoader(dataset, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+    ebd = get_ebd_byclass(net, loader, opt)
+    if tag == "val":
+        size = opt['val_coreset_size']
+    else:
+        size = opt['mem_size']
+
+    for j in range(opt['class_num']):
+        ebd[j] = np.array(ebd[j])
+
+        if ebd[j].shape[0] <= size:
+            memory.append(dataset.tensor_data[dataset.tensor_targets == j])
+            cnt[j] += ebd[j].shape[0]
+            continue
+
+        if cnt[j] <= size:
+            tmp = size
+            cnt[j] = ebd[j].shape[0]
+
+        elif id:
+            tmp = cnt[j]
+            cnt[j] += ebd[j].shape[0] - size
+    
+        else:
+            print("Wrong!!!")
+
+        idx = uniform_sample(ebd[j], size, tmp / cnt[j])        
+        memory.append(dataset.tensor_data[dataset.tensor_targets == j][idx])
+    return memory

@@ -1,0 +1,11 @@
+nohup: ignoring input
+--------Train with all data--------
+[Seq 1, Epoch 10] val accuracy: 0.77 (1636 / 2115), avg loss: 0.10 .
+[Seq 1, Epoch 20] val accuracy: 0.78 (1653 / 2115), avg loss: 0.09 .
+[Seq 1, Epoch 30] val accuracy: 0.79 (1670 / 2115), avg loss: 0.08 .
+[Seq 1, Epoch 40] val accuracy: 0.79 (1674 / 2115), avg loss: 0.08 .
+[Seq 1, Epoch 50] val accuracy: 0.79 (1676 / 2115), avg loss: 0.07 .
+[Seq 1, Epoch 60] val accuracy: 0.80 (1685 / 2115), avg loss: 0.07 .
+[Seq 1, Epoch 70] val accuracy: 0.80 (1687 / 2115), avg loss: 0.06 .
+[Seq 1, Epoch 80] val accuracy: 0.80 (1687 / 2115), avg loss: 0.06 .
+[Seq 1, Epoch 90] val accuracy: 0.80 (1691 / 2115), avg loss: 0.05 .

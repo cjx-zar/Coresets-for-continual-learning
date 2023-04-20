@@ -34,15 +34,13 @@ def train_val_split(data_path, df, transforms, val_ratio):
     return np.array(train_data), torch.tensor(train_targets), np.array(val_data), torch.tensor(val_targets)
 
 
-
-
 class MyCustomDataset(Dataset):
     def __init__(self, data_path, df, transforms=None):
         self.data_path = data_path
         self.df = df
         self.transforms = transforms
 
-        self.weight = torch.tensor(1 - self.df['Target'].value_counts() / len(self.df), dtype=torch.float)
+        self.class_weight = torch.tensor(1 - self.df['Target'].value_counts() / len(self.df), dtype=torch.float)
         self.data_size = len(self.df)
         self.tensor_data = []
         self.tensor_targets = []
@@ -58,10 +56,14 @@ class MyCustomDataset(Dataset):
             self.tensor_targets.append(torch.tensor(self.df['Target'].iloc[idx]))
         self.tensor_data = np.array(self.tensor_data)
         self.tensor_targets = np.array(self.tensor_targets)
+        self.weight = torch.ones(len(self.tensor_targets))
         #     self.data.append(img.numpy())
         #     self.targets.append(self.df['Target'].iloc[idx])
         # self.data = np.array(self.data)
         # self.targets = np.array(self.targets)
+
+    def update_classw(self):
+        self.class_weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)
 
     def __getitem__(self, index):
         # img_path = os.path.join(
@@ -72,27 +74,33 @@ class MyCustomDataset(Dataset):
         #     img = self.transforms(img)
         # return (img, torch.tensor(self.df['Target'][index]))
 
-        return (self.tensor_data[index], self.tensor_targets[index])
+        return (self.tensor_data[index], self.tensor_targets[index], self.weight[index])
 
     def __len__(self):
         return len(self.tensor_targets)
 
 
 class MySimpleDataset(Dataset):
-    def __init__(self, data, targets):
+    def __init__(self, data, targets, weight):
        self.tensor_data = data
        self.tensor_targets = targets
-       self.weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)
+       if weight is None:
+           weight = torch.ones(len(targets))
+       self.weight = weight
+       self.class_weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)
+
+    def update_classw(self):
+        self.class_weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)
 
     def __getitem__(self, index):
-        return (self.tensor_data[index], self.tensor_targets[index])
+        return (self.tensor_data[index], self.tensor_targets[index], self.weight[index])
 
     def __len__(self):
         return len(self.tensor_targets)
 
 
-def make_data(data, targets):
-    return MySimpleDataset(data, targets)
+def make_data(data, targets, weight):
+    return MySimpleDataset(data, targets, weight)
 
 
 def init_df(data_info_path, train, day, reshuffle, design):
@@ -140,9 +148,11 @@ def load_seq_RSNA(data_info_path, data_path, modify_size, train, day=1, reshuffl
                                 transforms.Resize(modify_size),
                                 transforms.ToTensor(),
                                 transforms.Normalize((0.4885, ),(0.2446, ))]), val_ratio)
-            trainset_list.append(make_data(train_data, train_targets))
-            valset_list.append(make_data(val_data, val_targets))
+            trainset_list.append(make_data(train_data, train_targets, torch.ones(len(train_targets))))
+            valset_list.append(make_data(val_data, val_targets, torch.ones(len(val_targets))))
 
+        # trainset_list = trainset_list[-1:] + trainset_list[:-1]
+        # valset_list = valset_list[-1:] + valset_list[:-1]
         return trainset_list, valset_list
 
     elif train == 'test':
