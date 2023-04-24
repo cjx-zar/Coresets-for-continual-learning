@@ -9,3 +9,9 @@ nohup: ignoring input
 [Seq 1, Epoch 70] val accuracy: 0.80 (1687 / 2115), avg loss: 0.06 .
 [Seq 1, Epoch 80] val accuracy: 0.80 (1687 / 2115), avg loss: 0.06 .
 [Seq 1, Epoch 90] val accuracy: 0.80 (1691 / 2115), avg loss: 0.05 .
+[Seq 1, Epoch 100] val accuracy: 0.80 (1699 / 2115), avg loss: 0.05 .
+test accuracy: 0.816 (7402 / 9069).
+Current test acc : 0.816, Best previous test acc : 0.816
+Training time: 2445.901
+Last Forgetting : 0.000
+Last Intransigence : 0.018

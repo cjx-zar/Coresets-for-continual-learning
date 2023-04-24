@@ -15,7 +15,7 @@
     "coreset_size": 512,
     "val_coreset_size": 128,
     "ignore": 0.05,
-    "GPUs": "6",
+    "GPUs": "2",
     "batch_size": 128,
     "reweight" : 101,
     "new_replay" : 10,
