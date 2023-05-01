@@ -3,13 +3,16 @@ import torch
 import torch.utils.data as data
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
+import torch.autograd.functional as F
 import torchvision.models as models
+from torch.utils.data.dataset import Dataset
+from functorch import make_functional_with_buffers, vmap, grad
 import os
 import numpy as np
 from copy import deepcopy
 import time
 import random
+import gc
 
 from loaddata import load_seq_RSNA
 from mymodels import ResNet18_pt
@@ -29,28 +32,63 @@ test_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['d
                               modify_size=opt['modify_size'], train='test', reshuffle=False, design=opt['design'])
 test_loader = data.DataLoader(test_data[0], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
-def cac_grad(net, criterion, eles):
-    # 返回平均grad
-    if isinstance(eles, list):
-        k = len(eles)
-    else:
-        eles = [eles]
-        k = 1
-    net.zero_grad()
-    net.train()
-    for ele in eles:
-        inputs, labels, _ = ele
-        if inputs.dim() == 3:
-            inputs = torch.unsqueeze(inputs, dim=0)
-        if labels.dim() == 0:
-            labels = torch.as_tensor([labels])
-        inputs, labels = inputs.to(device), labels.to(device)
-        _, outputs = net(inputs)
-        loss = criterion(outputs, labels)
-        loss.backward()
+class SimpleDT(Dataset):
+    def __init__(self, dt):
+       self.dt = dt
 
-    grad = np.array([x.grad.cpu() / k for x in net.parameters() if x.grad is not None])
-    return grad
+    def __getitem__(self, index):
+        return (self.dt[index][0], self.dt[index][1], self.dt[index][2])
+
+    def __len__(self):
+        return len(self.dt)
+
+def cac_grad(net, criterion, eles, reduction='avg'):
+    if isinstance(eles, list) or isinstance(eles, np.ndarray):
+        train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+    else:
+        train_loader = data.DataLoader(eles, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+
+    model = deepcopy(net)
+    model.eval()
+    criterion_sum = deepcopy(criterion)
+
+    if reduction == 'avg':
+        criterion_sum.reduction = 'sum'
+        train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        model.zero_grad()
+        for i, ddata in enumerate(train_loader):
+            inputs, labels, _ = ddata
+            inputs, labels = inputs.to(device), labels.to(device)
+            _, outputs = model(inputs)
+            loss = criterion_sum(outputs, labels)
+            loss.backward()
+
+        ans = np.array([x.grad.cpu() / len(eles) for x in model.parameters()])
+        
+    else:
+        model = model.cpu()
+        criterion_sum.weight = criterion_sum.weight.cpu()
+        fmodel, params, buffers = make_functional_with_buffers(model)
+        def compute_loss_stateless_model(params, buffers, sample, target):
+            batch = sample.unsqueeze(0)
+            targets = target.unsqueeze(0)
+            _, predictions = fmodel(params, buffers, batch) 
+            loss = criterion_sum(predictions, targets)
+            return loss
+        ft_compute_grad = grad(compute_loss_stateless_model)
+        ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, 0, 0))
+        
+        ans = []
+        for i, ddata in enumerate(train_loader):
+            model.zero_grad()
+            inputs, labels, _ = ddata
+            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, inputs, labels)
+            ans.append(ft_per_sample_grads)
+
+        del model, params, buffers
+        gc.collect()
+    return ans
+    
 
 class ReservoirSampling:
     def __init__(self, k):
@@ -58,41 +96,45 @@ class ReservoirSampling:
         self.count = 0 # 已经接收的元素个数
         self.reservoir = [] # 蓄水池
         self.grads = [] # 每个池中元素的梯度信息(numpy)
-        self.avggrad = None
+        self.idx = np.arange(opt['batch_size'])
 
-    def update_avggrad(self, x, plus=True):
-        if self.avggrad is None:
-            self.avggrad = x / self.k
-        else:
-            if plus:
-                self.avggrad += x / self.k
-            else:
-                self.avggrad -= x / self.k
-
-    def sample(self, net, criterion, idx):
+    def _sample(self, net, criterion, idx, i, amt):
         dataset = train_data[idx]
-        for i in range(len(dataset)):
+        all_grad = cac_grad(net, criterion, [dataset[j] for j in range(i, min(i+amt, len(dataset)))], 'none')
+        for i in range(i, min(i+amt, len(dataset))):
             element = dataset[i] # tuple(x, y, w)
             self.count += 1
+            p = (i % amt) // opt['batch_size']
+            q = i % opt['batch_size']
             if len(self.reservoir) < self.k: # 蓄水池未满，直接加入
                 self.reservoir.append(element)
-                newgrad = cac_grad(net, criterion, element)
+                # newgrad = cac_grad(net, criterion, element)
+                newgrad = np.array([x[q].detach().clone() for x in all_grad[p]])
                 self.grads.append(newgrad)
-                self.update_avggrad(newgrad)
             else: # 蓄水池已满，以k/count的概率替换
                 j = random.randint(0, self.count - 1)
                 if j < self.k:
                     self.reservoir[j] = element
-                    newgrad = cac_grad(net, criterion, element)
-                    self.update_avggrad(newgrad)
-                    self.update_avggrad(self.grads[j], False)
+                    # newgrad = cac_grad(net, criterion, element)
+                    newgrad = np.array([x[q].detach().clone() for x in all_grad[p]])
                     self.grads[j] = newgrad
+        del all_grad
+        gc.collect()
 
-    def get_reservoir(self):
-        return self.reservoir
+    def sample(self, net, criterion, idx):
+        amt = opt['batch_size'] * 5
+        for i in range(0, len(train_data[idx]), amt):
+            self._sample(net, criterion, idx, i, amt)
+            gc.collect()
     
-    def get_grad(self):
-        return self.avggrad
+    def update_idx(self):
+        self.idx = np.random.choice(self.k, opt['batch_size'], replace=False)
+    
+    def get_batch_reservoir(self):
+        return np.take(self.reservoir, self.idx, axis=0)
+    
+    def get_batch_grad(self):
+        return np.mean(np.take(self.grads, self.idx, axis=0), axis=0)
     
     def empty(self):
         return self.count < self.k
@@ -104,17 +146,17 @@ class ToT_grad:
         self.count = 0 # 已经见过的元素个数
         self.history_grad = None
 
-    def update_history(self, net, criterion, idx): # 做成类，动态平均
+    def update_history(self, net, criterion, idx):
         tdata = train_data[idx]
         m = len(tdata)
-        if self.history_grad is not None:
-            self.history_grad *= (self.count / (self.count + m))
+        # if self.history_grad is not None:
+        #     self.history_grad *= (self.count / (self.count + m))
 
-        train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
+        train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
         criterion_sum = deepcopy(criterion)
         criterion_sum.reduction = 'sum'
         net.zero_grad()
-        net.train()
+        net.eval()
         for i, ddata in enumerate(train_loader):
             inputs, labels, _ = ddata
             inputs, labels = inputs.to(device), labels.to(device)
@@ -122,11 +164,15 @@ class ToT_grad:
             loss = criterion_sum(outputs, labels)
             loss.backward()
 
-        curgrad = np.array([x.grad.cpu() for x in net.parameters() if x.grad is not None])
+        curgrad = np.array([x.grad.cpu() for x in net.parameters()])
+        # if self.history_grad is None:
+        #     self.history_grad = curgrad / (self.count + m)
+        # else:
+        #     self.history_grad += curgrad / (self.count + m)
         if self.history_grad is None:
-            self.history_grad = curgrad / (self.count + m)
+            self.history_grad = curgrad / m
         else:
-            self.history_grad += curgrad / (self.count + m)
+            self.history_grad += curgrad / m
         self.count += m
     
     def get_history(self):
@@ -191,10 +237,12 @@ def eva_and_save_model(net, method):
 def train(idx, criterion, val_loader, net, mode="train", tolerance=4):
     tdata = train_data[idx]
     if mode == "train":
-        optimizer = optim.SGD(net.parameters(), lr=opt['lr'])
+        optimizer = optim.SGD(net.parameters(), lr=opt['lr'] / (idx + 1))
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         epochs = opt['epochs']
     else:
-        optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'])
+        optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'] / (idx + 1))
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
         epochs = opt['finetune_epochs']
     train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
     best_acc = 0.0
@@ -219,10 +267,10 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=4):
             # 求memory中数据在当前模型下的梯度
             if not Memory.empty():
                 now = 0
-                cur_grad = cac_grad(net, criterion, Memory.get_reservoir())
-                cur_grad += Tot_grad.get_history() - Memory.get_grad()
+                Memory.update_idx()
+                cur_grad = cac_grad(net, criterion, Memory.get_batch_reservoir()) * idx
+                cur_grad += (Tot_grad.get_history() - Memory.get_batch_grad() * idx) * opt['alpha']
                 for param in net.parameters():
-                    if param.grad is None: continue
                     param.grad += cur_grad[now].to(device)
                     now += 1
             optimizer.step()
@@ -257,6 +305,8 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=4):
                 if tol >= tolerance:
                         print("!!!Early Stop!!!")
                         break
+        
+        schedule.step()
 
     return best_model
 
@@ -289,7 +339,9 @@ def SVRG():
 
         # 更新Memory, history_grad和val_coreset
         Memory.sample(net, criterion, i)
+        print("!sample done!")
         Tot_grad.update_history(net, criterion, i)
+        print("!update history done!")
         val_coreset = get_Uniform(net, new_val_data, cnt_val, opt, i, "val")
     
     end_time = time.time()

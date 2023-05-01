@@ -9,13 +9,13 @@ class ResNet18(nn.Module):
         super(ResNet18, self).__init__()
         self.net = models.resnet18(pretrained=pre)
         self.net.conv1 = torch.nn.Conv2d(in_channel, 64, kernel_size=(7, 7), stride=(2, 2), padding=(3, 3), bias=False)
-        self.fc = torch.nn.Linear(512, num_classes)
+        self.net.fc = torch.nn.Linear(512, num_classes)
         self.ebd = nn.Sequential(*list(self.net.children())[:-1])
         
     def forward(self, x):
         x = self.ebd(x)
         feature = x.view(x.size(0), -1)
-        res = self.fc(feature)
+        res = self.net.fc(feature)
         return feature, res
 
 class VGG16(nn.Module):

@@ -7,14 +7,15 @@
     "ori_size": 1024,
     "modify_size": 224,
     "design": 1,
-    "epochs": 10,
+    "epochs": 100,
     "finetune_epochs": 100,
     "finetune_lr": 0.001,
     "lr": 0.001,
     "mem_size": 2048,
     "val_coreset_size": 128,
-    "GPUs": "4",
+    "GPUs": "0",
     "batch_size": 128,
+    "alpha": 0.1,
     "loss": "balanced",
     "model": "resnet18-pt"
 }
