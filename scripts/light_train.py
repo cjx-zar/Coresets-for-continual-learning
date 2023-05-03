@@ -42,7 +42,7 @@ class SimpleDT(Dataset):
     def __len__(self):
         return len(self.dt)
 
-def cac_grad(net, criterion, eles, reduction='avg'):
+def cac_grad(net, criterion, eles):
     if isinstance(eles, list) or isinstance(eles, np.ndarray):
         train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
     else:
@@ -50,43 +50,19 @@ def cac_grad(net, criterion, eles, reduction='avg'):
 
     model = deepcopy(net)
     model.eval()
-    criterion_sum = deepcopy(criterion)
+    train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+    model.zero_grad()
+    cnt = 0
+    for i, ddata in enumerate(train_loader):
+        inputs, labels, _ = ddata
+        inputs, labels = inputs.to(device), labels.to(device)
+        _, outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        cnt += 1
 
-    if reduction == 'avg':
-        criterion_sum.reduction = 'sum'
-        train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-        model.zero_grad()
-        for i, ddata in enumerate(train_loader):
-            inputs, labels, _ = ddata
-            inputs, labels = inputs.to(device), labels.to(device)
-            _, outputs = model(inputs)
-            loss = criterion_sum(outputs, labels)
-            loss.backward()
-
-        ans = np.array([x.grad.cpu() / len(eles) for x in model.parameters()])
+    ans = np.array([x.grad.cpu() / cnt for x in model.parameters()])
         
-    else:
-        model = model.cpu()
-        criterion_sum.weight = criterion_sum.weight.cpu()
-        fmodel, params, buffers = make_functional_with_buffers(model)
-        def compute_loss_stateless_model(params, buffers, sample, target):
-            batch = sample.unsqueeze(0)
-            targets = target.unsqueeze(0)
-            _, predictions = fmodel(params, buffers, batch) 
-            loss = criterion_sum(predictions, targets)
-            return loss
-        ft_compute_grad = grad(compute_loss_stateless_model)
-        ft_compute_sample_grad = vmap(ft_compute_grad, in_dims=(None, None, 0, 0))
-        
-        ans = []
-        for i, ddata in enumerate(train_loader):
-            model.zero_grad()
-            inputs, labels, _ = ddata
-            ft_per_sample_grads = ft_compute_sample_grad(params, buffers, inputs, labels)
-            ans.append(ft_per_sample_grads)
-
-        del model, params, buffers
-        gc.collect()
     return ans
     
 
@@ -97,8 +73,7 @@ class ReservoirSampling:
         self.reservoir = [] # 蓄水池
         self.idx = np.arange(opt['batch_size'])
 
-    def sample(self, idx):
-        dataset = train_data[idx]
+    def sample(self, dataset):
         for i in range(len(dataset)):
             element = dataset[i] # tuple(x, y, w)
             self.count += 1
@@ -119,6 +94,7 @@ class ReservoirSampling:
         return self.count < self.k
 
 Memory = ReservoirSampling(opt['mem_size'])
+val_Memory = ReservoirSampling(opt['val_coreset_size'])
 
 class ToT_grad:
     def __init__(self):
@@ -226,16 +202,16 @@ def eva_and_save_model(net, method):
     # torch.save(net.state_dict(), '../model/' + opt['model'] + '-' + str(opt['coreset_size']) + '/' + opt['loss'] + '-seq' + str(opt['day']) + acc_info + method + borib + '-t')
 
 
-def train(idx, criterion, val_loader, net, mode="train", tolerance=4):
+def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
     lastnet = deepcopy(net)
     tdata = train_data[idx]
     if mode == "train":
         optimizer = optim.SGD(net.parameters(), lr=opt['lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
         epochs = opt['epochs']
     else:
         optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
         epochs = opt['finetune_epochs']
     train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
     best_acc = 0.0
@@ -308,7 +284,7 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=4):
                         break
         
         lastnet = deepcopy(net)
-        schedule.step()
+        # schedule.step()
 
     return best_model
 
@@ -325,15 +301,17 @@ def SVRG():
     for i in range(opt['day']):
         # 确定val_loader不变
         # new_val_data = val_data[i]
-        new_val_data = merge(val_data[i], val_coreset, opt, 1)
-        new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        # new_val_data = merge(val_data[i], val_coreset, opt, 1)
+        # val_Memory.sample(val_data[i])
+        new_val_loader = data.DataLoader(val_data[i], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
+        # new_val_loader = data.DataLoader(SimpleDT(val_Memory.reservoir), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
         if opt['loss'] == 'balanced':
             criterion = nn.CrossEntropyLoss(weight=train_data[i].class_weight.to(device))
         best_model = train(i, criterion, new_val_loader, net, "train")
         net.load_state_dict(best_model)
         Tot_grad.recover_from_best()
-        
+
         # 记录net的test_acc, 计算Last Forgetting
         cur_acc = model_test(net)
         best_prev = max(best_prev, cur_acc)
@@ -342,11 +320,11 @@ def SVRG():
         Intrans.append(opt['non_CIL'] - cur_acc)
 
         # 更新Memory, history_grad和val_coreset
-        Memory.sample(i)
+        Memory.sample(train_data[i])
         print("!sample done!")
         Tot_grad.update_history(net, criterion, i)
         print("!update history done!")
-        val_coreset = get_Uniform(net, new_val_data, cnt_val, opt, i, "val")
+        # val_coreset = get_Uniform(net, new_val_data, cnt_val, opt, i, "val")
     
     end_time = time.time()
     print("Training time: %.3f" % (end_time - start_time))
