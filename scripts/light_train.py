@@ -42,27 +42,18 @@ class SimpleDT(Dataset):
     def __len__(self):
         return len(self.dt)
 
-def cac_grad(net, criterion, eles):
-    if isinstance(eles, list) or isinstance(eles, np.ndarray):
-        train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-    else:
-        train_loader = data.DataLoader(eles, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-
-    model = deepcopy(net)
-    model.eval()
+def cac_grad(net, criterion, eles, times):
     train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-    model.zero_grad()
-    cnt = 0
+    net.zero_grad()
     for i, ddata in enumerate(train_loader):
         inputs, labels, _ = ddata
         inputs, labels = inputs.to(device), labels.to(device)
-        _, outputs = model(inputs)
+        _, outputs = net(inputs)
         loss = criterion(outputs, labels)
         loss.backward()
-        cnt += 1
 
-    ans = np.array([x.grad.cpu() / cnt for x in model.parameters()])
-        
+    ans = np.array([x.grad.cpu() * times for x in net.parameters()])
+    net.zero_grad()
     return ans
     
 
@@ -105,18 +96,17 @@ class ToT_grad:
 
     def update_history(self, net, criterion, idx):
         tdata = train_data[idx]
-        m = len(tdata)
         train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-        criterion_sum = deepcopy(criterion)
-        criterion_sum.reduction = 'sum'
         net.zero_grad()
-        net.eval()
+        net.train()
+        m = 0
         for i, ddata in enumerate(train_loader):
             inputs, labels, _ = ddata
             inputs, labels = inputs.to(device), labels.to(device)
             _, outputs = net(inputs)
-            loss = criterion_sum(outputs, labels)
+            loss = criterion(outputs, labels)
             loss.backward()
+            m += 1
 
         curgrad = np.array([x.grad.cpu() for x in net.parameters()])
         if self.history_grad is None:
@@ -207,11 +197,11 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
     tdata = train_data[idx]
     if mode == "train":
         optimizer = optim.SGD(net.parameters(), lr=opt['lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         epochs = opt['epochs']
     else:
         optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.9)
+        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         epochs = opt['finetune_epochs']
     train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
     best_acc = 0.0
@@ -226,7 +216,6 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
             inputs, labels, weights = inputs.to(device), labels.to(device), weights.to(device)
             optimizer.zero_grad()
             _, outputs = net(inputs)
-
             loss = criterion(outputs, labels)
             loss.backward()
             loss100 += loss.item()
@@ -236,17 +225,20 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
             if not Memory.empty():
                 now = 0
                 Memory.update_idx()
-                cur_grad = cac_grad(net, criterion, Memory.get_batch_reservoir()) * idx
+                new_grad = np.array([x.grad.cpu() for x in net.parameters()])
+
+                cur_grad = cac_grad(net, criterion, Memory.get_batch_reservoir(), idx)
                 
-                last_grad = cac_grad(lastnet, criterion, Memory.get_batch_reservoir()) * idx
+                last_grad = cac_grad(lastnet, criterion, Memory.get_batch_reservoir(), idx)
                 
                 Tot_grad.update_record(cur_grad - last_grad)
 
                 cur_grad += (Tot_grad.get_history() - last_grad) * opt['alpha']
 
                 for param in net.parameters():
-                    param.grad += cur_grad[now].to(device)
+                    param.grad += cur_grad[now].to(device) + new_grad[now].to(device)
                     now += 1
+
             optimizer.step()
 
         Tot_grad.update_epoch()    
@@ -284,7 +276,7 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
                         break
         
         lastnet = deepcopy(net)
-        # schedule.step()
+        schedule.step()
 
     return best_model
 
@@ -297,6 +289,7 @@ def SVRG():
     cnt_val = [0, 0]
     F = []
     Intrans = []
+    class_num = torch.zeros(opt['class_num'])
     start_time = time.time()
     for i in range(opt['day']):
         # 确定val_loader不变
@@ -307,7 +300,9 @@ def SVRG():
         # new_val_loader = data.DataLoader(SimpleDT(val_Memory.reservoir), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
         if opt['loss'] == 'balanced':
-            criterion = nn.CrossEntropyLoss(weight=train_data[i].class_weight.to(device))
+            class_num += train_data[i].class_num
+            criterion = nn.CrossEntropyLoss(weight=(1 - class_num / sum(class_num)).to(device))
+            # criterion = nn.CrossEntropyLoss()
         best_model = train(i, criterion, new_val_loader, net, "train")
         net.load_state_dict(best_model)
         Tot_grad.recover_from_best()

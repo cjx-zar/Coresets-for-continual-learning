@@ -39,8 +39,8 @@ class MyCustomDataset(Dataset):
         self.data_path = data_path
         self.df = df
         self.transforms = transforms
-
-        self.class_weight = torch.tensor(1 - self.df['Target'].value_counts() / len(self.df), dtype=torch.float)
+        self.class_num = self.df['Target'].value_counts()
+        self.class_weight = torch.tensor(1 - self.class_num / len(self.df), dtype=torch.float)
         self.data_size = len(self.df)
         self.tensor_data = []
         self.tensor_targets = []
@@ -87,7 +87,9 @@ class MySimpleDataset(Dataset):
        if weight is None:
            weight = torch.ones(len(targets))
        self.weight = weight
-       self.class_weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)
+       self.class_num = torch.bincount(self.tensor_targets)
+       self.class_weight = torch.tensor(1 - self.class_num / len(self.tensor_targets), dtype=torch.float)
+       
 
     def update_classw(self):
         self.class_weight = torch.tensor(1 - torch.bincount(self.tensor_targets) / len(self.tensor_targets), dtype=torch.float)

@@ -15,7 +15,7 @@
     "val_coreset_size": 384,
     "GPUs": "1",
     "batch_size": 128,
-    "alpha": 0.1,
+    "alpha": 0.3,
     "loss": "balanced",
     "model": "resnet18-pt"
 }

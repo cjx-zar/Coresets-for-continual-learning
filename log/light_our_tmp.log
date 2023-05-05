@@ -1,0 +1,77 @@
+nohup: ignoring input(no weighted criterion)
+--------Train with SVRG replay--------
+[Seq 1, Epoch 10] val accuracy: 0.76 (322 / 423), avg loss: 0.46 .
+[Seq 1, Epoch 20] val accuracy: 0.78 (328 / 423), avg loss: 0.40 .
+[Seq 1, Epoch 30] val accuracy: 0.78 (328 / 423), avg loss: 0.35 .
+[Seq 1, Epoch 40] val accuracy: 0.78 (329 / 423), avg loss: 0.30 .
+[Seq 1, Epoch 50] val accuracy: 0.78 (332 / 423), avg loss: 0.26 .
+[Seq 1, Epoch 60] val accuracy: 0.78 (330 / 423), avg loss: 0.22 .
+[Seq 1, Epoch 70] val accuracy: 0.78 (332 / 423), avg loss: 0.18 .
+[Seq 1, Epoch 80] val accuracy: 0.78 (329 / 423), avg loss: 0.15 .
+[Seq 1, Epoch 90] val accuracy: 0.78 (330 / 423), avg loss: 0.12 .
+[Seq 1, Epoch 100] val accuracy: 0.78 (328 / 423), avg loss: 0.10 .
+test accuracy: 0.793 (7195 / 9069).
+Current test acc : 0.793, Best previous test acc : 0.793
+!sample done!
+!update history done!
+[Seq 2, Epoch 10] val accuracy: 0.89 (376 / 423), avg loss: 0.52 .
+[Seq 2, Epoch 20] val accuracy: 0.89 (376 / 423), avg loss: 369875236049597248.00 .
+[Seq 2, Epoch 30] val accuracy: 0.89 (376 / 423), avg loss: 4183415914530952.50 .
+[Seq 2, Epoch 40] val accuracy: 0.89 (376 / 423), avg loss: 61538175296034.13 .
+[Seq 2, Epoch 50] val accuracy: 0.89 (376 / 423), avg loss: 113788517106756.27 .
+[Seq 2, Epoch 60] val accuracy: 0.89 (376 / 423), avg loss: 141928256958190.94 .
+[Seq 2, Epoch 70] val accuracy: 0.89 (376 / 423), avg loss: 217243280963447.47 .
+[Seq 2, Epoch 80] val accuracy: 0.89 (376 / 423), avg loss: 6193745313818214.00 .
+[Seq 2, Epoch 90] val accuracy: 0.89 (376 / 423), avg loss: 303272118190080.00 .
+[Seq 2, Epoch 100] val accuracy: 0.89 (376 / 423), avg loss: 191923012658790.41 .
+test accuracy: 0.684 (6202 / 9069).
+Current test acc : 0.684, Best previous test acc : 0.793
+!sample done!
+!update history done!
+[Seq 3, Epoch 10] val accuracy: 0.88 (372 / 423), avg loss: 638851381139149056.00 .
+[Seq 3, Epoch 20] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 30] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 40] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 50] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 60] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 70] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 80] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 90] val accuracy: 0.88 (372 / 423), avg loss: nan .
+[Seq 3, Epoch 100] val accuracy: 0.88 (372 / 423), avg loss: nan .
+test accuracy: 0.684 (6202 / 9069).
+Current test acc : 0.684, Best previous test acc : 0.793
+!sample done!
+!update history done!
+[Seq 4, Epoch 10] val accuracy: 0.77 (325 / 423), avg loss: 82836258566858336.00 .
+[Seq 4, Epoch 20] val accuracy: 0.77 (325 / 423), avg loss: 597284349804544.00 .
+[Seq 4, Epoch 30] val accuracy: 0.77 (325 / 423), avg loss: 208344271803.73 .
+[Seq 4, Epoch 40] val accuracy: 0.77 (325 / 423), avg loss: 664885627016.53 .
+[Seq 4, Epoch 50] val accuracy: 0.77 (325 / 423), avg loss: 49980571575910.40 .
+[Seq 4, Epoch 60] val accuracy: 0.77 (325 / 423), avg loss: 197626915192832.00 .
+[Seq 4, Epoch 70] val accuracy: 0.77 (325 / 423), avg loss: 165711338152482.12 .
+[Seq 4, Epoch 80] val accuracy: 0.77 (325 / 423), avg loss: 26893977561770.67 .
+[Seq 4, Epoch 90] val accuracy: 0.77 (325 / 423), avg loss: 3339304797191099.50 .
+[Seq 4, Epoch 100] val accuracy: 0.77 (325 / 423), avg loss: 4411028336087313.00 .
+test accuracy: 0.684 (6202 / 9069).
+Current test acc : 0.684, Best previous test acc : 0.793
+!sample done!
+!update history done!
+[Seq 5, Epoch 10] val accuracy: 0.34 (143 / 423), avg loss: 193729118693910112.00 .
+[Seq 5, Epoch 20] val accuracy: 0.34 (143 / 423), avg loss: 2511901453835742.00 .
+[Seq 5, Epoch 30] val accuracy: 0.34 (143 / 423), avg loss: 39580756304426872.00 .
+[Seq 5, Epoch 40] val accuracy: 0.34 (143 / 423), avg loss: 597406893587387.75 .
+[Seq 5, Epoch 50] val accuracy: 0.34 (143 / 423), avg loss: 581159436947729.12 .
+[Seq 5, Epoch 60] val accuracy: 0.34 (143 / 423), avg loss: 26272442431867016.00 .
+[Seq 5, Epoch 70] val accuracy: 0.34 (143 / 423), avg loss: nan .
+[Seq 5, Epoch 80] val accuracy: 0.34 (143 / 423), avg loss: nan .
+[Seq 5, Epoch 90] val accuracy: 0.34 (143 / 423), avg loss: nan .
+[Seq 5, Epoch 100] val accuracy: 0.34 (143 / 423), avg loss: nan .
+test accuracy: 0.684 (6202 / 9069).
+Current test acc : 0.684, Best previous test acc : 0.793
+!sample done!
+!update history done!
+Training time: 52383.898
+Last Forgetting : 0.088
+Last Intransigence : 0.128
+test accuracy: 0.684 (6202 / 9069).
+val accuracy: 0.687 (1454 / 2115).
