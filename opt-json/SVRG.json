@@ -8,14 +8,14 @@
     "modify_size": 224,
     "design": 1,
     "epochs": 100,
-    "finetune_epochs": 100,
-    "finetune_lr": 0.001,
+    "finetune_epochs": 10,
+    "finetune_lr": 0.0005,
     "lr": 0.001,
     "mem_size": 2048,
     "val_coreset_size": 384,
     "GPUs": "1",
     "batch_size": 128,
-    "alpha": 0.3,
+    "alpha": 0.1,
     "loss": "balanced",
     "model": "resnet18-pt"
 }

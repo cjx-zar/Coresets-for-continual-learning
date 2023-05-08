@@ -94,21 +94,21 @@ class ToT_grad:
         self.record = None
         self.best = None
 
-    def update_history(self, net, criterion, idx):
+    def update_history(self, model, criterion, idx):
         tdata = train_data[idx]
         train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
-        net.zero_grad()
-        net.train()
+        model.zero_grad()
+        model.train()
         m = 0
         for i, ddata in enumerate(train_loader):
             inputs, labels, _ = ddata
             inputs, labels = inputs.to(device), labels.to(device)
-            _, outputs = net(inputs)
+            _, outputs = model(inputs)
             loss = criterion(outputs, labels)
             loss.backward()
             m += 1
 
-        curgrad = np.array([x.grad.cpu() for x in net.parameters()])
+        curgrad = np.array([x.grad.cpu() for x in model.parameters()])
         if self.history_grad is None:
             self.history_grad = curgrad / m
         else:
@@ -192,21 +192,26 @@ def eva_and_save_model(net, method):
     # torch.save(net.state_dict(), '../model/' + opt['model'] + '-' + str(opt['coreset_size']) + '/' + opt['loss'] + '-seq' + str(opt['day']) + acc_info + method + borib + '-t')
 
 
-def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
+def train(idx, criterion_cur, criterion_old, val_loader, net, mode="train", tolerance=400):
     lastnet = deepcopy(net)
     tdata = train_data[idx]
     if mode == "train":
         optimizer = optim.SGD(net.parameters(), lr=opt['lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         epochs = opt['epochs']
+        every_eval = 5
+        every_print = 10
     else:
         optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'] / (idx + 1))
-        schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
         epochs = opt['finetune_epochs']
+        every_eval = 1
+        every_print = 1
+    schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     train_loader = data.DataLoader(tdata, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
     best_acc = 0.0
     last_acc = 0.0
+    loss_best = 1e9
     tol = 0
+    best_ep = -1
     for epoch in range(epochs):
         loss100 = 0.0
         cnt = 0
@@ -216,7 +221,7 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
             inputs, labels, weights = inputs.to(device), labels.to(device), weights.to(device)
             optimizer.zero_grad()
             _, outputs = net(inputs)
-            loss = criterion(outputs, labels)
+            loss = criterion_cur(outputs, labels)
             loss.backward()
             loss100 += loss.item()
             cnt += 1
@@ -227,58 +232,78 @@ def train(idx, criterion, val_loader, net, mode="train", tolerance=400):
                 Memory.update_idx()
                 new_grad = np.array([x.grad.cpu() for x in net.parameters()])
 
-                cur_grad = cac_grad(net, criterion, Memory.get_batch_reservoir(), idx)
+                cur_grad = cac_grad(net, criterion_old, Memory.get_batch_reservoir(), idx)
                 
-                last_grad = cac_grad(lastnet, criterion, Memory.get_batch_reservoir(), idx)
+                last_grad = cac_grad(lastnet, criterion_old, Memory.get_batch_reservoir(), idx)
                 
                 Tot_grad.update_record(cur_grad - last_grad)
 
-                cur_grad += (Tot_grad.get_history() - last_grad) * opt['alpha']
+                Tot_grad.update_epoch()
+                cur_grad *= (1 - opt['alpha'])
+                cur_grad += Tot_grad.get_history() * opt['alpha']
+
+                # cur_grad += (Tot_grad.get_history() - last_grad) * opt['alpha']
 
                 for param in net.parameters():
                     param.grad += cur_grad[now].to(device) + new_grad[now].to(device)
                     now += 1
 
+            lastnet = deepcopy(net)
             optimizer.step()
 
-        Tot_grad.update_epoch()    
+        # Tot_grad.update_epoch()    
 
-        if epoch % 5 == 4:      
+        if epoch % every_eval == every_eval - 1:      
             # 验证集
             net.eval()
             with torch.no_grad(): 
                 correct = 0
                 summ = 0
+                loss_val = 0.0
                 for i, ddata in enumerate(val_loader):
                     inputs, labels, weights = ddata
-                    inputs, labels, weights = inputs.to(device), labels.to(device), weights.to(device)
+                    inputs, labels = inputs.to(device), labels.to(device)
 
                     _, validation_output = net(inputs)
-                    val_y = torch.max(validation_output, 1)[1].cpu().squeeze()
-                    for i in range(len(labels)):
-                        if val_y[i] == labels[i]:
-                            correct += 1
-                        summ += 1
+                    loss_val += criterion_cur(validation_output, labels).item()
+                    val_y = torch.max(validation_output, 1)[1].squeeze()
+                    correct += (val_y == labels).sum().item()
+                    summ += len(val_y)
                 val_accuracy = float(correct / summ)
                 if last_acc > val_accuracy:
                     tol += 1
                 else:
                     tol = 0
                 last_acc = val_accuracy
-                if best_acc < val_accuracy:
-                    best_acc = val_accuracy
+                # if best_acc < val_accuracy:
+                #     best_acc = val_accuracy
+                #     best_model = deepcopy(net.state_dict())
+                #     Tot_grad.update_best()
+                #     best_ep = epoch
+                if loss_best > loss_val:
+                    loss_best = loss_val
                     best_model = deepcopy(net.state_dict())
                     Tot_grad.update_best()
-                if epoch % 10 == 9:
-                    print('[Seq %d, Epoch %d] val accuracy: %.2f (%d / %d), avg loss: %.2f .' % (idx+1, epoch+1, val_accuracy, correct, summ, loss100 / cnt))
+                    best_ep = epoch
+                if epoch % every_print == every_print - 1:
+                    print('[Seq %d, Epoch %d] val accuracy: %.2f (%d / %d), avg loss: %.2f, best epoch: %d .' % (idx+1, epoch+1, val_accuracy, correct, summ, loss100 / cnt, best_ep))
                 if tol >= tolerance:
-                        print("!!!Early Stop!!!")
-                        break
+                    print("!!!Early Stop!!!")
+                    break
         
-        lastnet = deepcopy(net)
+        # lastnet = deepcopy(net)
         schedule.step()
 
     return best_model
+
+
+def estimate(net, F, Intrans, best_prev):
+    cur_acc = model_test(net)
+    best_prev = max(best_prev, cur_acc)
+    print("Current test acc : %.3f, Best previous test acc : %.3f" % (cur_acc, best_prev))
+    F.append(best_prev - cur_acc)
+    Intrans.append(opt['non_CIL'] - cur_acc)
+    return best_prev
 
 
 def SVRG():
@@ -289,7 +314,7 @@ def SVRG():
     cnt_val = [0, 0]
     F = []
     Intrans = []
-    class_num = torch.zeros(opt['class_num'])
+    class_num = torch.ones(opt['class_num'])
     start_time = time.time()
     for i in range(opt['day']):
         # 确定val_loader不变
@@ -300,26 +325,32 @@ def SVRG():
         # new_val_loader = data.DataLoader(SimpleDT(val_Memory.reservoir), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
         if opt['loss'] == 'balanced':
+            criterion_old = nn.CrossEntropyLoss(weight=(1 - class_num / sum(class_num)).to(device))
+            criterion_cur = nn.CrossEntropyLoss(weight=train_data[i].class_weight.to(device))
             class_num += train_data[i].class_num
-            criterion = nn.CrossEntropyLoss(weight=(1 - class_num / sum(class_num)).to(device))
-            # criterion = nn.CrossEntropyLoss()
-        best_model = train(i, criterion, new_val_loader, net, "train")
+        # criterion = nn.CrossEntropyLoss()
+        
+        if i:
+            best_model = train(i, criterion_cur, criterion_old, new_val_loader, net, "fine-tune")
+        else:
+            best_model = train(i, criterion_cur, criterion_old, new_val_loader, net, "train")
+
         net.load_state_dict(best_model)
         Tot_grad.recover_from_best()
 
         # 记录net的test_acc, 计算Last Forgetting
-        cur_acc = model_test(net)
-        best_prev = max(best_prev, cur_acc)
-        print("Current test acc : %.3f, Best previous test acc : %.3f" % (cur_acc, best_prev))
-        F.append(best_prev - cur_acc)
-        Intrans.append(opt['non_CIL'] - cur_acc)
+        if i != opt['day'] - 1:
+            best_prev = estimate(net, F, Intrans, best_prev)
 
         # 更新Memory, history_grad和val_coreset
         Memory.sample(train_data[i])
         print("!sample done!")
-        Tot_grad.update_history(net, criterion, i)
+        Tot_grad.update_history(net, criterion_cur, i)
         print("!update history done!")
         # val_coreset = get_Uniform(net, new_val_data, cnt_val, opt, i, "val")
+
+        if i == opt['day'] - 1:
+            best_prev = estimate(net, F, Intrans, best_prev)
     
     end_time = time.time()
     print("Training time: %.3f" % (end_time - start_time))
