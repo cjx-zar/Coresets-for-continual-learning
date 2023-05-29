@@ -32,6 +32,11 @@ test_data = load_seq_RSNA(data_info_path=opt['data_info_path'], data_path=opt['d
                               modify_size=opt['modify_size'], train='test', reshuffle=False, design=opt['design'])
 test_loader = data.DataLoader(test_data[0], batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
+best_prev = 0.0
+F = []
+Intrans = []
+
+
 class SimpleDT(Dataset):
     def __init__(self, dt):
        self.dt = dt
@@ -41,6 +46,7 @@ class SimpleDT(Dataset):
 
     def __len__(self):
         return len(self.dt)
+
 
 def cac_grad(net, criterion, eles, times):
     train_loader = data.DataLoader(SimpleDT(eles), batch_size=opt['batch_size'], shuffle=False, num_workers=4)
@@ -177,17 +183,18 @@ def model_val(net):
     return val_accuracy
 
 
-def eva_and_save_model(net, method):
-    test_acc = model_test(net)
-    forget_acc = model_val(net)
-    test_acc = ('%.2f'%test_acc).split('.')[-1]
-    forget_acc = ('%.2f'%forget_acc).split('.')[-1]
-    acc_info = '-' + test_acc + '-' + forget_acc
+def estimate(net):
+    global best_prev
+    cur_acc = model_test(net)
+    best_prev = max(best_prev, cur_acc)
+    print("Current test acc : %.3f, Best previous test acc : %.3f" % (cur_acc, best_prev))
+    F.append(best_prev - cur_acc)
+    Intrans.append(opt['non_CIL'] - cur_acc)
 
-    if opt['design']:
-        borib = '-ib'
-    else:
-        borib = '-b'
+
+def eva_and_save_model(net, method):
+    estimate(net)
+    # forget_acc = model_val(net)
 
     # torch.save(net.state_dict(), '../model/' + opt['model'] + '-' + str(opt['coreset_size']) + '/' + opt['loss'] + '-seq' + str(opt['day']) + acc_info + method + borib + '-t')
 
@@ -289,7 +296,6 @@ def train(idx, criterion_cur, criterion_old, val_loader, net, mode="train", tole
                     print('[Seq %d, Epoch %d] val accuracy: %.2f (%d / %d), avg loss: %.2f, best epoch: %d .' % (idx+1, epoch+1, val_accuracy, correct, summ, loss100 / cnt, best_ep))
                 if tol >= tolerance:
                     print("!!!Early Stop!!!")
-                    break
         
         # lastnet = deepcopy(net)
         schedule.step()
@@ -297,23 +303,11 @@ def train(idx, criterion_cur, criterion_old, val_loader, net, mode="train", tole
     return best_model
 
 
-def estimate(net, F, Intrans, best_prev):
-    cur_acc = model_test(net)
-    best_prev = max(best_prev, cur_acc)
-    print("Current test acc : %.3f, Best previous test acc : %.3f" % (cur_acc, best_prev))
-    F.append(best_prev - cur_acc)
-    Intrans.append(opt['non_CIL'] - cur_acc)
-    return best_prev
-
-
 def SVRG():
     print("--------Train with SVRG replay--------")
     net = ResNet18_pt(opt['class_num']).to(device)
     val_coreset = None
-    best_prev = 0.0
     cnt_val = [0, 0]
-    F = []
-    Intrans = []
     class_num = torch.ones(opt['class_num'])
     start_time = time.time()
     for i in range(opt['day']):
@@ -338,9 +332,9 @@ def SVRG():
         net.load_state_dict(best_model)
         Tot_grad.recover_from_best()
 
-        # 记录net的test_acc, 计算Last Forgetting
+        # 记录net的test_acc, 计算Last Forgetting & Intransigence
         if i != opt['day'] - 1:
-            best_prev = estimate(net, F, Intrans, best_prev)
+            estimate(net)
 
         # 更新Memory, history_grad和val_coreset
         Memory.sample(train_data[i])
@@ -348,15 +342,13 @@ def SVRG():
         Tot_grad.update_history(net, criterion_cur, i)
         print("!update history done!")
         # val_coreset = get_Uniform(net, new_val_data, cnt_val, opt, i, "val")
-
-        if i == opt['day'] - 1:
-            best_prev = estimate(net, F, Intrans, best_prev)
     
     end_time = time.time()
+    eva_and_save_model(net, '-SVRG')
     print("Training time: %.3f" % (end_time - start_time))
     print("Last Forgetting : %.3f" % (sum(F)/len(F)))
     print("Last Intransigence : %.3f" % (sum(Intrans)/len(Intrans)))
-    eva_and_save_model(net, '-SVRG')
+    
 
 
 if __name__ == '__main__':

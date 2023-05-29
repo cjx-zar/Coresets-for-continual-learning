@@ -19,7 +19,7 @@ class MultiCEFocalLoss(torch.nn.Module):
     def __init__(self, class_num, gamma=2, alpha=None, reduction='mean'):
         super(MultiCEFocalLoss, self).__init__()
         if alpha is None:
-            self.alpha = torch.ones(class_num, 1)
+            self.alpha = torch.ones(class_num, 1).to(device)
         else:
             self.alpha = alpha
         self.gamma = gamma
@@ -32,7 +32,7 @@ class MultiCEFocalLoss(torch.nn.Module):
         alpha = self.alpha[ids.data.view(-1)] # 注意，这里的alpha是给定的一个list(tensor),里面的元素分别是每一个类的权重因子
         probs = (pt * class_mask).sum(1).view(-1, 1) # 利用onehot作为mask，提取对应的pt
         # probs[probs < 0.3] = 1 - probs[probs < 0.3]
-        probs[probs < 0.2] = 0.8
+        # probs[probs < 0.2] = 0.8
         log_p = probs.log()
         # 同样，原始ce上增加一个动态权重衰减因子
         loss = -alpha * (torch.pow((1 - probs), self.gamma)) * log_p
@@ -165,12 +165,14 @@ def update_weight(net, criterion, tot_dataset, new_datalen):
 def train(idx, train_data, memory, val_loader, net, mode="train", tolerance=4):
     if mode == "train":
         optimizer = optim.SGD(net.parameters(), lr=opt['lr'])
-        # optimizer = optim.Adagrad(net.parameters(), lr=opt['lr'])
         epochs = opt['epochs']
+        every_eval = 5
+        every_print = 10
     else:
         optimizer = optim.SGD(net.parameters(), lr=opt['finetune_lr'])
-        # optimizer = optim.Adagrad(net.parameters(), lr=opt['finetune_lr'])
         epochs = opt['finetune_epochs']
+        every_eval = 1
+        every_print = 1
 
     if memory is not None:
         coreset, coreset_len = get_Gonzalez(net, memory, opt)
@@ -178,12 +180,13 @@ def train(idx, train_data, memory, val_loader, net, mode="train", tolerance=4):
     else:
         new_train_data = deepcopy(train_data)
     if opt['loss'] == 'balanced':
-        criterion = nn.NLLLoss(weight=new_train_data.class_weight.to(device), reduction='none')
-        # criterion = nn.CrossEntropyLoss(weight=new_train_data.class_weight.to(device))
+        criterion = nn.CrossEntropyLoss(weight=new_train_data.class_weight.to(device))
     elif opt['loss'] == 'focal':
         criterion = MultiCEFocalLoss(opt['class_num'], 1, new_train_data.class_weight.to(device), 'none')
+    elif opt['loss'] == 'nll':
+        criterion = nn.NLLLoss(weight=new_train_data.class_weight.to(device), reduction='none')
     train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
-
+    schedule = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.9)
     best_acc = 0.0
     last_acc = 0.0
     tol = 0
@@ -198,17 +201,18 @@ def train(idx, train_data, memory, val_loader, net, mode="train", tolerance=4):
             optimizer.zero_grad()
             _, outputs = net(inputs)
 
-            if opt['loss'] == 'balanced':
-                log_probs = F.log_softmax(outputs, dim=1) # NLLLoss
+            if opt['loss'] == 'nll':
+                outputs = F.log_softmax(outputs, dim=1) # NLLLoss
             elif opt['loss'] == 'focal':
-                log_probs = F.softmax(outputs, dim=1) # focal
+                outputs = F.softmax(outputs, dim=1) # focal
             
-            loss = criterion(log_probs, labels)
-            weighted_loss = loss * weights
-            final_loss = weighted_loss.mean() 
-            final_loss.backward()
+            loss = criterion(outputs, labels)
+            if opt['loss'] == 'nll' or opt['loss'] == 'focal':
+                weighted_loss = loss * weights
+                loss = weighted_loss.mean()
+            loss.backward()
             optimizer.step()
-            loss100 += final_loss.item()
+            loss100 += loss.item()
             cnt += 1
         
         if epoch % opt['reweight'] == opt['reweight']-1 and memory is not None:
@@ -223,7 +227,7 @@ def train(idx, train_data, memory, val_loader, net, mode="train", tolerance=4):
             new_train_data = merge(train_data, coreset, opt, len(train_data)/coreset_len)
             train_loader = data.DataLoader(new_train_data, batch_size=opt['batch_size'], shuffle=True, num_workers=4)
 
-        if epoch % 5 == 4:      
+        if epoch % every_eval == every_eval - 1:      
             # 验证集
             with torch.no_grad(): 
                 correct = 0
@@ -251,12 +255,12 @@ def train(idx, train_data, memory, val_loader, net, mode="train", tolerance=4):
                 if best_acc < val_accuracy:
                     best_acc = val_accuracy
                     best_model = deepcopy(net.state_dict())
-                if epoch % 10 == 9:
+                if epoch % every_print == every_print - 1:
                     print('[Seq %d, Epoch %d] val accuracy: %.2f (%d / %d), avg loss: %.2f .' % (idx+1, epoch+1, val_accuracy, correct, summ, loss100 / cnt))
                 if tol >= tolerance:
                         print("!!!Early Stop!!!")
-                        break
-
+                        # break
+        # schedule.step()
     return best_model
 
 
@@ -276,7 +280,10 @@ def forgetting_train():
         new_val_data = val_data[i]
         new_val_loader = data.DataLoader(new_val_data, batch_size=opt['batch_size'], shuffle=False, num_workers=4)
 
-        best_model = train(i, train_data[i], None, new_val_loader, net, "train")
+        if i:
+            best_model = train(i, train_data[i], None, new_val_loader, net, "fine-tune")
+        else:
+            best_model = train(i, train_data[i], None, new_val_loader, net, "train")
         net.load_state_dict(best_model)
         # 记录net的test_acc, 计算Last Forgetting
         cur_acc = model_test(net)
@@ -331,5 +338,6 @@ def continual_train_withCandN():
     eva_and_save_model(net, '-c+n')
 
 if __name__ == '__main__':
-    # forgetting_train()
-    continual_train_withCandN()
+    for i in range(3):
+        forgetting_train()
+    # continual_train_withCandN()
