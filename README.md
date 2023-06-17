@@ -1,2 +1,2 @@
 # Coresets-for-continual-learning
-Continual learning for breast cancer grading, a Coresets way.
+Continual learning for breast cancer grading, a SVRG way.
